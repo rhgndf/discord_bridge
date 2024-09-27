@@ -1,21 +1,32 @@
-# dmr-bridge-discord
+# discord-bridge
 
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
-Bridge a DMR network with a Discord voice channel.
+Bridge a Discord voice channel with an RF link.
 
 ## Getting started
 
-This script is inspired by <https://github.com/jess-sys/DMRBridgeWAV/blob/master/DMRBridgeWAV>.
+This script is inspired by <https://github.com/jess-sys/dmr-bridge-discord>.
 
-The target server is AnalogBridge (see <https://github.com/DVSwitch/Analog_Bridge>).
+The target server is AllStarLink USRP channel.
 
-![Diagram](https://user-images.githubusercontent.com/20131496/151708871-3f1e4635-ecde-49df-8de3-484d58337695.png)
+### AllStarLink configuration
+```
+[1999](node-main)
+rxchannel = USRP/127.0.0.1:34001:32001
+duplex = 3 ; Avoid echoing back to discord
+```
 
 ### Build
 
-Make sure you have [Rust installed](https://rustup.rs/) and also [Opus codec library development files installed](https://packages.ubuntu.com/jammy/libopus-dev)
+Make sure you have [Rust installed](https://rustup.rs/) and also Opus codec library development files installed
 
+#### Install opus in Debian and Ubuntu
+```
+apt install libopus-dev
+```
+
+#### Build discord bridge
 ```bash
 cargo build --release
 # or run it directly :
@@ -24,7 +35,7 @@ cargo build --release
 
 ### Install
 
-Install binaries to `/opt/dmr-bridge-discord/bin`, default config to `/opt/dmr-bridge-discord/.env` and install systemd service to `/lib/systemd/system/dmr-bridge-discord`.
+Install binaries to `/opt/discord-bridge/bin`, default config to `/opt/discord-bridge/.env` and install systemd service to `/lib/systemd/system/discord-bridge`.
 
 ```bash
 # Coming soon
@@ -35,40 +46,21 @@ make install-systemd
 
 ### Configure
 
-Edit the `.env` (the same directory or in /opt/dmr-bridge-discord) file to reflect your infrastructure :
+Edit the `.env` (the same directory or in /opt/discord-bridge) file to reflect your infrastructure :
 
 * `BOT_TOKEN` : see [this link](https://github.com/reactiflux/discord-irc/wiki/Creating-a-discord-bot-&-getting-a-token) to know how to get a token
 * `BOT_PREFIX` : prefix to add before the bot's commands
 * `TARGET_RX_ADDR` : your Analog Bridge IP and port
-* `LOCAL_RX_ADDR` : your dmr-bridge-discord IP and port (is localhost)
+* `LOCAL_RX_ADDR` : your discord-bridge IP and port (is localhost)
 
 ### Run
 
 #### Systemctl service
 
 ```bash
-systemctl start dmr-bridge-discord.service
+systemctl start discord-bridge.service
 # or enable it at boot:
-# systemctl enable dmr-bridge-discord.service --now
-```
-
-#### Portable install
-
-Do the following after you've built or [downloaded the pre-compiled version](https://github.com/jess-sys/dmr-bridge-discord/releases).
-
-Then execute the binary in the same folder or export the environment variables present in the .env file.
-
-```bash
-./dmr-bridge-discord-linux
-```
-
-#### Inside a container
-
-You can use the docker-compose configuration file:
-
-```bash
-# coming soon - not available atm
-docker-compose up
+# systemctl enable discord-bridge.service --now
 ```
 
 ### Usage
@@ -80,29 +72,7 @@ Here are the bot's commands:
 
 The bot will join the voice channel you're in after your type `!join`.
 
-Make sure you don't TX and RX at the same time, as AnalogBridge and the rest of the stack is half-duplex.
-
 ## Todo
 
-* Discord multiple voice users at once (merge audio channels)
-* Verbosity levels
-* SMS and DTMF messages
-* Full Docker support
-* systemd services support
-
-## Useless stuff (Copyright)
-
-Bridge a DMR network with a Discord voice channel.
-Copyright (C) 2022 Jessy SOBREIRO
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, version 3.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
+* Option to Discord multiple voice users at once (merge audio channels)
+* DV clients

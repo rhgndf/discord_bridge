@@ -1,112 +1,45 @@
 use chrono::prelude::Utc;
-use std::{
-    io::{ErrorKind as IoErrorKind, Result as IoResult, SeekFrom},
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
-use tokio::io::{AsyncRead, AsyncSeek, AsyncWriteExt, ReadBuf};
-
-use pin_project::pin_project;
+use log::{debug, info};
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
-use serenity::{
-    async_trait,
-    client::Context as ClientContext,
-    framework::standard::{
-        macros::{command, group},
-        CommandResult,
-    },
-    model::channel::Message,
-    prelude::{Mentionable, Mutex, TypeMapKey},
-    Result as SerenityResult,
-};
+use serenity::prelude::Mentionable;
 use songbird::{
-    input::{AsyncAdapterStream, AsyncMediaSource, AudioStreamError, RawAdapter},
+    input::{AsyncAdapterStream, RawAdapter},
     CoreEvent,
 };
+use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+
+use crate::{Data, Error, PoiseContext};
 
 use crate::{
     bridge::USRPEventHandler,
     usrp::{packets::USRPPacket, USRPClient},
+    util::RingBufferStream,
 };
 
-pub struct DiscordBotContext;
-
-impl TypeMapKey for DiscordBotContext {
-    type Value = Arc<Mutex<u64>>;
-}
-
-#[pin_project]
-struct RingBufferStream {
-    #[pin]
-    stream: Box<dyn AsyncRead + Send + Sync + Unpin>,
-}
-
-impl AsyncRead for RingBufferStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<IoResult<()>> {
-        AsyncRead::poll_read(self.project().stream, cx, buf)
-    }
-}
-
-impl AsyncSeek for RingBufferStream {
-    fn start_seek(self: Pin<&mut Self>, _position: SeekFrom) -> IoResult<()> {
-        Err(IoErrorKind::Unsupported.into())
-    }
-
-    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<IoResult<u64>> {
-        unreachable!()
-    }
-}
-
-#[async_trait]
-impl AsyncMediaSource for RingBufferStream {
-    fn is_seekable(&self) -> bool {
-        false
-    }
-
-    async fn byte_len(&self) -> Option<u64> {
-        None
-    }
-
-    async fn try_resume(
-        &mut self,
-        _offset: u64,
-    ) -> Result<Box<dyn AsyncMediaSource>, AudioStreamError> {
-        Err(AudioStreamError::Unsupported)
-    }
-}
-
-#[group]
-#[commands(join, leave, ping)]
-pub struct General;
-
-#[command]
-#[only_in(guilds)]
-async fn join(ctx: &ClientContext, msg: &Message) -> CommandResult {
-    let guild = msg.guild(&ctx.cache).unwrap().clone();
+#[poise::command(prefix_command)]
+pub async fn join(ctx: PoiseContext<'_>, _command: Option<String>) -> Result<(), Error> {
+    let guild = ctx.guild().ok_or("No guild?")?.clone();
     let guild_id = guild.id;
+    let user_id = ctx.author_member().await.ok_or("No user?")?.user.id;
 
     let channel_id = guild
         .voice_states
-        .get(&msg.author.id)
+        .get(&user_id)
         .and_then(|voice_state| voice_state.channel_id);
 
     let channel = match channel_id {
         Some(channel) => channel,
         None => {
-            check_msg(msg.reply(ctx, "⚠️ Not in a voice channel").await);
-
+            ctx.say("⚠️ Not in a voice channel").await?;
             return Ok(());
         }
     };
 
-    let manager = songbird::get(ctx)
+    let serenity_context = ctx.serenity_context();
+    let manager = songbird::get(serenity_context)
         .await
         .expect("Songbird Voice client placed in at initialisation.")
         .clone();
@@ -129,8 +62,8 @@ async fn join(ctx: &ClientContext, msg: &Message) -> CommandResult {
         let usrp_channel = USRPEventHandler::new(
             usrpclient.clone(),
             guild_id,
-            ctx.http.clone(),
-            ctx.cache.clone(),
+            serenity_context.http.clone(),
+            serenity_context.cache.clone(),
         );
 
         handler.add_global_event(CoreEvent::SpeakingStateUpdate.into(), usrp_channel.clone());
@@ -147,7 +80,16 @@ async fn join(ctx: &ClientContext, msg: &Message) -> CommandResult {
             7680 * 5,
         );
         let adapter = RawAdapter::new(audio_stream, 48000, 2);
-        let audio_stream = handler.play_input(adapter.into());
+        let _ = handler.play_input(adapter.into());
+
+        info!(
+            "Connected to voice channel {} with id {}",
+            channel
+                .name(&serenity_context.http)
+                .await
+                .unwrap_or("{unknown}".to_string()),
+            channel.get()
+        );
 
         let handler = Arc::downgrade(&handler_lock);
         tokio::spawn(async move {
@@ -161,7 +103,7 @@ async fn join(ctx: &ClientContext, msg: &Message) -> CommandResult {
             let mut resampler =
                 SincFixedIn::new(48000 as f64 / 8000 as f64, 2.0, params, 160, 1).unwrap();
 
-            while let Some(handler) = handler.upgrade() {
+            while let Some(_handler) = handler.upgrade() {
                 let packet = usrpclient.recv().await;
                 if let Some(packet) = packet {
                     match packet {
@@ -183,74 +125,67 @@ async fn join(ctx: &ClientContext, msg: &Message) -> CommandResult {
                                     .collect();
                             audio_sender.write(&audio_data).await.unwrap();
                         }
-                        USRPPacket::Start(packet) => {}
-                        USRPPacket::End(packet) => {}
+                        USRPPacket::Start(_) => {}
+                        USRPPacket::End(_) => {}
                         _ => {
-                            println!("Unknown packet");
+                            debug!("Unknown USRP packet");
                         }
                     }
                 }
             }
         });
-
-        check_msg(
-            msg.reply(ctx, &format!("Joined {}", channel.mention()))
-                .await,
-        );
+        ctx.say(&format!("Joined {}", channel.mention())).await?;
     } else {
-        check_msg(msg.reply(ctx, "Error joining the channel").await);
+        ctx.say("Error joining the channel").await?;
     }
-
     Ok(())
 }
 
-#[command]
-#[only_in(guilds)]
-async fn leave(ctx: &ClientContext, msg: &Message) -> CommandResult {
-    let guild = msg.guild(&ctx.cache).unwrap().clone();
+#[poise::command(prefix_command)]
+pub async fn leave(ctx: PoiseContext<'_>, _command: Option<String>) -> Result<(), Error> {
+    let guild = ctx.guild().ok_or("No guild?")?.clone();
     let guild_id = guild.id;
+    let user_id = ctx.author_member().await.ok_or("No user?")?.user.id;
 
     let channel_id = guild
         .voice_states
-        .get(&msg.author.id)
+        .get(&user_id)
         .and_then(|voice_state| voice_state.channel_id)
         .unwrap();
 
-    let manager = songbird::get(ctx)
+    let serenity_context = ctx.serenity_context();
+    let manager = songbird::get(serenity_context)
         .await
         .expect("Songbird Voice client placed in at initialisation.")
         .clone();
     let has_handler = manager.get(guild_id).is_some();
 
-    if has_handler {
-        if let Err(e) = manager.remove(guild_id).await {
-            check_msg(msg.reply(ctx, format!("Failed: {:?}", e)).await);
-        }
-        check_msg(
-            msg.reply(ctx, &format!("Left {}", channel_id.mention()))
-                .await,
-        );
-    } else {
-        check_msg(msg.reply(ctx, "⚠️ Not in a voice channel").await);
-    }
-
-    Ok(())
-}
-
-#[command]
-async fn ping(ctx: &ClientContext, msg: &Message) -> CommandResult {
-    let now = Utc::now();
-    let elapsed = now - *msg.timestamp;
-    check_msg(
-        msg.reply(ctx, format!("Pong! ({} ms)", elapsed.num_milliseconds()))
-            .await,
+    info!(
+        "Disconnected from voice channel {} with id {}",
+        channel_id
+            .name(&serenity_context.http)
+            .await
+            .unwrap_or("{unknown}".to_string()),
+            channel_id.get()
     );
 
+    if has_handler {
+        if let Err(e) = manager.remove(guild_id).await {
+            ctx.say(format!("Failed: {:?}", e)).await?;
+        }
+        ctx.say(&format!("Left {}", channel_id.mention())).await?;
+    } else {
+        ctx.reply("⚠️ Not in a voice channel").await?;
+    }
+
     Ok(())
 }
 
-fn check_msg(result: SerenityResult<Message>) {
-    if let Err(why) = result {
-        println!("Error sending message: {:?}", why);
-    }
+#[poise::command(prefix_command)]
+pub async fn ping(ctx: PoiseContext<'_>, _command: Option<String>) -> Result<(), Error> {
+    let now = Utc::now();
+    let elapsed = now - *ctx.created_at();
+    ctx.reply(format!("Pong! ({} ms)", elapsed.num_milliseconds()))
+        .await?;
+    Ok(())
 }

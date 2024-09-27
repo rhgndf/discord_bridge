@@ -1,15 +1,15 @@
 [package]
-name = "dmr-bridge-discord"
-version = "0.2.0"
-authors = ["Alexandre MONIER <alexandre.monierc@gmail.com>", "Jessy SOBREIRO <jessy.sobreiro@gmail.com>"]
+name = "discord-bridge"
+version = "0.0.1"
+authors = ["Jie Feng <hjf3108@gmail.com>", "Alexandre MONIER <alexandre.monierc@gmail.com>", "Jessy SOBREIRO <jessy.sobreiro@gmail.com>"]
 keywords = ["dmr", "analog-bridge", "usrp", "discord"]
 edition = "2021"
 license = "GPL-3.0-only"
 readme = "README.md"
-description = "Bridge a DMR network with a Discord voice channel"
-repository = "https://github.com/jess-sys/dmr-bridge-discord.git"
-homepage = "https://github.com/jess-sys/dmr-bridge-discord"
-documentation = "https://github.com/jess-sys/dmr-bridge-discord/README.md"
+description = "Bridge a Discord voice channel with a RF channel"
+repository = "https://github.com/rhgndf/discord_bridge.git"
+homepage = "https://github.com/rhgndf/discord_bridge"
+documentation = "https://github.com/rhgndf/discord_bridge/README.md"
 categories = ["command-line-utilities", "multimedia::audio", "network-programming"]
 
 [dependencies]
@@ -20,7 +20,10 @@ chrono = "0.4.24"
 dotenv = "0.15.0"
 byteorder = "1.4.3"
 rubato = "0.15.0"
-dasp = { version = "0.11.0", features = ["all"] }
 symphonia = "0.5.4"
 pin-project = "1.1.5"
 rand = "0.8.5"
+poise = "0.6.1"
+log = "0.4.22"
+fern = "0.6.2"
+humantime = "2.1.0"

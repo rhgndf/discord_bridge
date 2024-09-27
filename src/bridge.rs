@@ -1,29 +1,28 @@
-use tokio::sync::Mutex;
-
-use std::{collections::HashMap, sync::Arc};
-
+use log::info;
 use rand::seq::SliceRandom;
-
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
-
-use songbird::{
-    events::context_data::VoiceTick,
-    model::payload::{ClientDisconnect, Speaking},
-    Event, EventContext, EventHandler as VoiceEventHandler,
-};
-
 use serenity::{
     all::Http,
     async_trait,
     cache::Cache,
     model::id::{GuildId, UserId},
 };
+use songbird::{
+    events::context_data::VoiceTick,
+    model::payload::{ClientDisconnect, Speaking},
+    Event, EventContext, EventHandler as VoiceEventHandler,
+};
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::Mutex;
 
-use crate::usrp::{
-    packets::{AudioPacket, EndPacket, StartPacket, USRPPacket},
-    USRPClient,
+use crate::{
+    usrp::{
+        packets::{AudioPacket, EndPacket, StartPacket, USRPPacket},
+        USRPClient,
+    },
+    util::extract_callsign,
 };
 
 struct UserData {
@@ -40,6 +39,8 @@ pub struct USRPEventHandlerData {
     resampler: SincFixedIn<f64>,
 
     guild_id: GuildId,
+
+    user_ssrc_map: HashMap<u64, u32>,
     ssrc_map: HashMap<u32, UserData>,
     cur_ssrc: Option<u32>,
     timeout_counter: u32,
@@ -69,10 +70,15 @@ impl USRPEventHandlerData {
             resampler,
 
             guild_id,
+            user_ssrc_map: HashMap::new(),
             ssrc_map: HashMap::new(),
             cur_ssrc: None,
             timeout_counter: 0,
         }
+    }
+
+    fn ssrc_to_user(&self, ssrc: u32) -> Option<&UserData> {
+        self.ssrc_map.get(&ssrc)
     }
 }
 
@@ -104,10 +110,9 @@ pub struct USRPEventHandler {
 impl VoiceEventHandler for USRPEventHandler {
     async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
         use EventContext as Ctx;
-        let mut data = self.inner.lock().await;
         match ctx {
             Ctx::SpeakingStateUpdate(Speaking {
-                speaking,
+                speaking: _,
                 ssrc,
                 user_id,
                 ..
@@ -124,32 +129,41 @@ impl VoiceEventHandler for USRPEventHandler {
                 // Using this map, you can map the `ssrc` in `voice_packet`
                 // to the user ID and handle their audio packets separately.
 
-                if let Some(user_id) = user_id {
-                    if let Some(guild) = data
-                        .guild_id
-                        .to_guild_cached(&data.cache)
-                        .map(|x| x.clone())
-                    {
-                        let member = guild.member(&data.http, user_id.0).await;
-                        if let Ok(member) = member {
-                            let member = &*member;
+                let mut data = self.inner.lock().await;
+                let user_id = user_id.as_ref()?;
+                let guild = data
+                    .guild_id
+                    .to_guild_cached(&data.cache)
+                    .map(|x| x.clone())?;
 
-                            data.ssrc_map.insert(
-                                *ssrc,
-                                UserData {
-                                    callsign: member.nick.clone().unwrap_or("".to_string()),
-                                    nick: member.nick.clone().unwrap_or("".to_string()),
-                                    name: member.user.name.clone(),
-                                    id: member.user.id,
-                                },
-                            );
-                        }
-                    }
-                }
+                let member = &*(guild.member(&data.http, user_id.0).await.ok()?);
+
+                let nick = member.nick.clone().unwrap_or("".to_string());
+                let callsign = extract_callsign(&nick).unwrap_or("".to_string());
+                let name = member.user.name.clone();
+                let id = member.user.id;
+                let user_data = UserData {
+                    callsign,
+                    nick,
+                    name,
+                    id,
+                };
+
+                info!(
+                    "{} ({}) with id: {} has connected",
+                    user_data.callsign, user_data.name, user_data.id
+                );
+
+                data.ssrc_map.insert(*ssrc, user_data);
+                data.user_ssrc_map.insert(id.get(), *ssrc);
             }
             Ctx::VoiceTick(VoiceTick {
-                speaking, silent, ..
+                speaking,
+                silent: _,
+                ..
             }) => {
+                let mut data = self.inner.lock().await;
+
                 let mut audio_vec = Vec::new();
 
                 let is_previously_transmitting = data.cur_ssrc.is_some();
@@ -181,13 +195,11 @@ impl VoiceEventHandler for USRPEventHandler {
                     } else {
                         data.timeout_counter -= 1;
                         if data.timeout_counter == 0 {
-
-                            let userdata = data.cur_ssrc.and_then(|x: u32| data.ssrc_map.get(&x)).unwrap();
-                            println!(
-                                "User {} ({}) stopped transmitting",
-                                userdata.callsign, userdata.name
+                            let user_data = data.ssrc_to_user(data.cur_ssrc.unwrap())?;
+                            info!(
+                                "{} ({}) with id: {} stopped transmitting",
+                                user_data.callsign, user_data.name, user_data.id
                             );
-
                             data.cur_ssrc = None;
                         }
                     }
@@ -203,11 +215,10 @@ impl VoiceEventHandler for USRPEventHandler {
                             sequence_number: data.client.get_and_increment_sequence_number(),
                         }))
                         .await;
-
-                    let userdata = data.cur_ssrc.and_then(|x: u32| data.ssrc_map.get(&x)).unwrap();
-                    println!(
-                        "User {} ({}) started transmitting",
-                        userdata.callsign, userdata.name
+                    let user_data = data.ssrc_to_user(data.cur_ssrc.unwrap())?;
+                    info!(
+                        "{} ({}) with id: {} started transmitting",
+                        user_data.callsign, user_data.name, user_data.id
                     );
                 } else if is_previously_transmitting && !is_currently_transmitting {
                     let _ = data
@@ -219,28 +230,35 @@ impl VoiceEventHandler for USRPEventHandler {
                 }
 
                 if audio_vec.len() == 960 {
-                    let output = data.resampler.process(&[&audio_vec], None);
+                    let audio_output: Vec<_> = data
+                        .resampler
+                        .process(&[&audio_vec], None)
+                        .ok()?
+                        .iter()
+                        .next()?
+                        .into_iter()
+                        .map(|f| (f * 32768.0) as i16)
+                        .collect();
 
-                    if output.is_ok() {
-                        let audio_output = &output.unwrap()[0];
-                        let audio_output: Vec<_> = audio_output
-                            .into_iter()
-                            .map(|f| (f * 32768.0) as i16)
-                            .collect();
-
-                        let _ = data
-                            .client
-                            .send(USRPPacket::Audio(AudioPacket {
-                                sequence_number: data.client.get_and_increment_sequence_number(),
-                                transmit: true,
-                                audio: audio_output,
-                            }))
-                            .await;
-                    }
+                    let _ = data
+                        .client
+                        .send(USRPPacket::Audio(AudioPacket {
+                            sequence_number: data.client.get_and_increment_sequence_number(),
+                            transmit: true,
+                            audio: audio_output,
+                        }))
+                        .await;
                 }
             }
             Ctx::ClientDisconnect(ClientDisconnect { user_id, .. }) => {
-                println!("User {:?} has disconnected", user_id);
+                let mut data = self.inner.lock().await;
+                let ssrc = data.user_ssrc_map.remove(&user_id.0)?;
+                let user_data = data.ssrc_map.remove(&ssrc)?;
+
+                info!(
+                    "{} ({}) with id: {} has disconnected",
+                    user_data.callsign, user_data.name, user_data.id
+                );
             }
             _ => {
                 // We won't be registering this struct for any more event classes.

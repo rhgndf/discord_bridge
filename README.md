@@ -1,22 +1,25 @@
-# discord-bridge
+# dmr-bridge-discord
 
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
-Bridge a Discord voice channel with any USRP channel, including AllStarLink.
+Bridge a DMR network with a Discord voice channel.
 
 ## Getting started
 
-This program is inspired by <https://github.com/jess-sys/dmr-bridge-discord>
+This script is inspired by <https://github.com/jess-sys/DMRBridgeWAV/blob/master/DMRBridgeWAV>.
+
+The target server is AnalogBridge (see <https://github.com/DVSwitch/Analog_Bridge>).
+
+![Diagram](https://user-images.githubusercontent.com/20131496/151708871-3f1e4635-ecde-49df-8de3-484d58337695.png)
 
 ### Build
 
-Make sure you have [Rust installed](https://rustup.rs/) and also Opus codec library development files installed
+Make sure you have [Rust installed](https://rustup.rs/) and also [Opus codec library development files installed](https://packages.ubuntu.com/jammy/libopus-dev)
 
 ```bash
-apt install libopus-dev
 cargo build --release
 # or run it directly :
-# cargo run
+# cargo run --release
 ```
 
 ### Install

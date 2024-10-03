@@ -8,7 +8,7 @@ use tokio::net::UdpSocket;
 pub struct USRPClient {
     rx: SocketAddr,
     tx: SocketAddr,
-    pub local_addr: SocketAddr,
+    local_addr: SocketAddr,
 
     rx_socket: Option<UdpSocket>,
     tx_socket: Option<UdpSocket>,
@@ -21,10 +21,12 @@ impl USRPClient {
     ///
     /// tx: The address to send packets to
     /// rx: The address to receive packets from
-    pub fn new(rx: SocketAddr, tx: SocketAddr) -> Self {
-        let local_addr: SocketAddr = if tx.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" }
-            .parse()
-            .unwrap();
+    pub fn new(rx: SocketAddr, tx: SocketAddr, local_addr: Option<SocketAddr>) -> Self {
+        let local_addr: SocketAddr = local_addr.unwrap_or_else(|| {
+            if tx.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" }
+                .parse()
+                .unwrap()
+        });
         Self {
             rx,
             tx,
@@ -44,8 +46,12 @@ impl USRPClient {
         let rx_socket = UdpSocket::bind(&self.rx).await?;
         self.tx_socket = Some(tx_socket);
         self.rx_socket = Some(rx_socket);
-
         Ok(())
+    }
+
+    pub fn disconnect(&mut self) {
+        self.tx_socket = None;
+        self.rx_socket = None;
     }
 
     pub async fn recv(&self) -> Option<USRPPacket> {
@@ -72,4 +78,15 @@ impl USRPClient {
         }
         Ok(0)
     }
+}
+
+enum VoicePacket {
+    Start(),
+    Audio(Vec<i16>),
+    End(),
+}
+
+trait VoiceClient {
+    async fn recv(&self) -> Result<VoicePacket, Error>;
+    async fn send(&self, packet: VoicePacket);
 }

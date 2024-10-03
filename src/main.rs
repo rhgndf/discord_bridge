@@ -10,17 +10,19 @@ use log::info;
 use poise::serenity_prelude as serenity;
 use serenity::{all::GatewayIntents, client::Client};
 use songbird::{driver::DecodeMode, Config, SerenityInit};
+use usrp::USRPClient;
 use std::{
     collections::HashMap,
     env,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
+use tokio::sync::Mutex;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
-type PoiseContext<'a> = poise::Context<'a, Data, Error>;
+type Context<'a> = poise::Context<'a, Data, Error>;
 pub struct Data {
-    votes: Mutex<HashMap<String, u32>>,
+    clients: Mutex<HashMap<u64, Arc<USRPClient>>>,
 }
 
 async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
@@ -73,7 +75,7 @@ async fn main() {
     let token = env::var("BOT_TOKEN").expect("Expected a token in the environment");
 
     let options = poise::FrameworkOptions {
-        commands: vec![commands::join(), commands::leave(), commands::ping()],
+        commands: vec![commands::data(), commands::join(), commands::leave(), commands::ping()],
         prefix_options: poise::PrefixFrameworkOptions {
             prefix: Some("!".into()),
             edit_tracker: Some(Arc::new(poise::EditTracker::for_timespan(
@@ -107,7 +109,7 @@ async fn main() {
                 );
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                 Ok(Data {
-                    votes: Mutex::new(HashMap::new()),
+                    clients: Mutex::new(HashMap::new()),
                 })
             })
         })

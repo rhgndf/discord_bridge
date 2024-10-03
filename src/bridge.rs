@@ -106,6 +106,10 @@ pub struct USRPEventHandler {
     inner: Arc<Mutex<USRPEventHandlerData>>,
 }
 
+impl Drop for USRPEventHandler {
+    fn drop(&mut self) {}
+}
+
 #[async_trait]
 impl VoiceEventHandler for USRPEventHandler {
     async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
@@ -138,7 +142,12 @@ impl VoiceEventHandler for USRPEventHandler {
 
                 let member = &*(guild.member(&data.http, user_id.0).await.ok()?);
 
-                let nick = member.nick.clone().unwrap_or("".to_string());
+                let nick = member.nick.clone().unwrap_or(
+                    member.user
+                        .global_name.clone()
+                        .unwrap_or(member.user.name.clone()),
+                ).clone();
+
                 let callsign = extract_callsign(&nick).unwrap_or("".to_string());
                 let name = member.user.name.clone();
                 let id = member.user.id;

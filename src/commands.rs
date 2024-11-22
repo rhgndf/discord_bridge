@@ -6,7 +6,7 @@ use rubato::{
 };
 use serenity::{all::EditChannel, prelude::Mentionable};
 use songbird::{
-    input::{AsyncAdapterStream, RawAdapter},
+    input::{AsyncAdapterStream, AsyncReadOnlySource, RawAdapter},
     CoreEvent,
 };
 use std::sync::Arc;
@@ -17,7 +17,6 @@ use crate::{Context, Data, Error};
 use crate::{
     bridge::USRPEventHandler,
     usrp::{packets::USRPPacket, USRPClient},
-    util::RingBufferStream,
 };
 
 #[poise::command(slash_command)]
@@ -27,11 +26,9 @@ pub async fn data(
 ) -> Result<(), Error> {
     println!("{:?}", user);
     //user.nick.unwrap_or(user.user.name.clone())
-    let nick = user.nick.unwrap_or(
-        user.user
-            .global_name
-            .unwrap_or(user.user.name),
-    );
+    let nick = user
+        .nick
+        .unwrap_or(user.user.global_name.unwrap_or(user.user.name));
     match crate::util::extract_callsign(&nick) {
         Some(callsign) => {
             ctx.say(format!("Callsign: {}", callsign)).await?;
@@ -97,9 +94,7 @@ pub async fn join(
         let (audio_receiver, mut audio_sender) = tokio::io::simplex(7680 * 5);
 
         let audio_stream = AsyncAdapterStream::new(
-            Box::new(RingBufferStream {
-                stream: Box::new(audio_receiver),
-            }),
+            Box::new(AsyncReadOnlySource::new(Box::new(audio_receiver))),
             7680 * 5,
         );
         let adapter = RawAdapter::new(audio_stream, 48000, 2);

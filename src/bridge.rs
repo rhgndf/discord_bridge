@@ -1,5 +1,5 @@
 use log::info;
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
@@ -185,7 +185,7 @@ impl VoiceEventHandler for USRPEventHandler {
                         .filter(|&x| data.ssrc_map.get(x).is_some())
                         .cloned()
                         .collect();
-                    data.cur_ssrc = active_ssrcs.choose(&mut rand::thread_rng()).copied();
+                    data.cur_ssrc = active_ssrcs.choose(&mut rand::rng()).copied();
                     data.timeout_counter = 10;
                 }
 
